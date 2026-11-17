@@ -181,6 +181,7 @@ onAuthStateChanged(auth, (user) => {
     els.list.replaceChildren();
     els.empty.hidden = true;
     items = [];
+    lastSignature = null;
     return;
   }
 
@@ -207,6 +208,7 @@ function sortKey(item) {
   return ms !== undefined ? -ms : -Date.now();
 }
 
+// Only the rendered list is sorted here. Nothing is written on load, so there is no write loop.
 function listenToLinks(uid) {
   unsubscribeLinks = onSnapshot(
     linksCollection(uid),
@@ -214,7 +216,6 @@ function listenToLinks(uid) {
       const list = snapshot.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .sort((a, b) => sortKey(a) - sortKey(b));
-      migrateMissingOrder(list);
       if (dragging) {
         pendingItems = list; // don't redraw under the finger; apply after the drop
         return;
@@ -224,19 +225,6 @@ function listenToLinks(uid) {
     },
     (err) => showStatus(friendlyError(err))
   );
-}
-
-// Links saved before reordering existed get an `order` value once, so they can be sorted and moved.
-async function migrateMissingOrder(list) {
-  const missing = list.filter((item) => typeof item.order !== "number" && item.createdAt?.toMillis);
-  if (!missing.length || !auth.currentUser) return;
-  const batch = writeBatch(db);
-  for (const item of missing) batch.update(linkRef(item.id), { order: sortKey(item) });
-  try {
-    await batch.commit();
-  } catch (err) {
-    showStatus(friendlyError(err));
-  }
 }
 
 els.form.addEventListener("submit", async (event) => {
@@ -280,8 +268,15 @@ async function removeLink(item) {
 }
 
 // ---------- Rendering (textContent only, never innerHTML, so stored data can't inject markup) ----------
+let lastSignature = null;
+
+// Only rebuild the cards when something visible changed, so hover and clicks are never interrupted.
 function renderLinks(list) {
-  els.list.replaceChildren(...list.map(makeCard));
+  const signature = list.map((i) => `${i.id}|${i.order}|${i.title}|${i.url}`).join("\n");
+  if (signature !== lastSignature) {
+    lastSignature = signature;
+    els.list.replaceChildren(...list.map(makeCard));
+  }
   els.empty.hidden = list.length > 0;
 }
 
@@ -326,20 +321,37 @@ function makeCard(item) {
   return card;
 }
 
-// The site's icon, fetched by domain. If there is no icon, show the first letter of the title instead.
+// The site's own icon first (the most accurate), then icon services, then the first letter of the title.
+function logoSources(url) {
+  const host = encodeURIComponent(hostOf(url));
+  return [
+    `https://${host}/favicon.ico`,
+    `https://icons.duckduckgo.com/ip3/${host}.ico`,
+    `https://www.google.com/s2/favicons?domain=${host}&sz=128`,
+  ];
+}
+
 function makeLogo(item) {
   const wrap = document.createElement("span");
   wrap.className = "card-logo";
+
+  const sources = logoSources(item.url);
+  let next = 0;
 
   const img = document.createElement("img");
   img.alt = "";
   img.loading = "lazy";
   img.referrerPolicy = "no-referrer";
   img.addEventListener("error", () => {
+    next++;
+    if (next < sources.length) {
+      img.src = sources[next];
+      return;
+    }
     wrap.classList.add("fallback");
     wrap.textContent = (item.title.charAt(0) || "?").toUpperCase();
   });
-  img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostOf(item.url))}&sz=128`;
+  img.src = sources[0];
 
   wrap.append(img);
   return wrap;
