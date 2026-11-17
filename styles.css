@@ -268,6 +268,21 @@ body {
   padding: 48px 12px;
 }
 
+.list-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.list-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 /* ---------- Link list: one column on phones, grid on larger screens ---------- */
 .list {
   display: grid;
@@ -400,6 +415,15 @@ body {
 body.is-reordering {
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Grip and delete buttons only appear in edit mode. In edit mode the title is not a link, so tapping it does nothing. */
+.card-action { display: none; }
+
+.list.editing .card-action { display: block; }
+
+.list.editing .card-main {
+  pointer-events: none;
 }
 
 /* ---------- Fullscreen / standalone polish ---------- */

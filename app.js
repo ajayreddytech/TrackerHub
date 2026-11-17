@@ -37,6 +37,7 @@ const els = {
   loginBtn: $("login-btn"),
   signOutBtn: $("signout-btn"),
   installBtn: $("install-btn"),
+  editBtn: $("edit-btn"),
   userName: $("user-name"),
   form: $("add-form"),
   url: $("url-input"),
@@ -51,6 +52,7 @@ let unsubscribeLinks = null;
 let items = []; // latest links, in display order
 let pendingItems = null; // snapshot received while a drag is in progress
 let dragging = null; // state of the active drag, if any
+let editing = false; // when true, cards show the drag handle and delete button
 
 // Shows the message on whichever screen is visible (sign-in or app).
 function showStatus(message) {
@@ -100,6 +102,56 @@ function hostOf(href) {
   }
 }
 
+// Common words used in tracker names. A run-together name such as "mycryptotracker" is split
+// only when every piece is in this list. Otherwise it stays as one word (so "netlify" is not broken up).
+const KNOWN_WORDS = new Set((
+  "a i an and at by for from in of on or the to with my our your go app hub pro plus max lite " +
+  "net web site online daily weekly monthly track tracker tracking crypto coin coins bitcoin ethereum " +
+  "money budget expense expenses finance financial stock stocks price prices market markets fund funds " +
+  "invest investment investments portfolio trade trading trader dividend earnings profit loss gain value " +
+  "savings saving debt loan loans tax taxes invoice invoices bill bills spend spending cost costs rate rates " +
+  "income worth networth cash card cards bank credit pay payment payments wallet currency forex exchange " +
+  "fitness workout workouts health habit habits sleep water weight diet food calorie calories nutrition " +
+  "protein meal meals recipe recipes gym run running runner step steps walk walking cycle cycling swim " +
+  "yoga meditation mood journal diary note notes task tasks todo planner plan timer time study reading " +
+  "book books movie movies game games score scores sport sports fantasy league goal goals school grade " +
+  "grades class classes learn learning course courses language work office team project projects client " +
+  "clients sales sale deal deals shop store shopping list lists order orders delivery package parcel " +
+  "shipping post mail email news feed blog blogs chat social friend friends family kids pet pets plant " +
+  "plants garden car fuel gas mileage power energy solar electric electricity bike home house rent " +
+  "mortgage utility utilities insurance subscription subscriptions recurring chore chores clean cleaning " +
+  "medicine medication symptom symptoms period fertility blood pressure sugar glucose heart body fat muscle " +
+  "lift lifting reps sets race marathon golf tennis chess puzzle puzzles word words quiz quizzes music song " +
+  "songs playlist podcast video videos photo photos art design dev code coding bug bugs issue issues ticket " +
+  "tickets sheet sheets data dashboard report reports stats stat analytics metric metrics monitor monitoring " +
+  "status uptime server servers cloud host hosting domain domains speed test tests check checker finder " +
+  "search scanner converter calculator calc generator maker builder editor viewer reader writer manager " +
+  "organizer helper assistant coach mentor city state country world global first last next new old big " +
+  "small great super smart easy quick fast simple personal private open free total full live real true " +
+  "one two three all best top count counter counters log logs logger booking air fire earth sun moon star " +
+  "stars sky dark light blue green red black white gold silver token tokens nft nfts chain block blocks " +
+  "defi eth btc quit smoke smoking alcohol drink drinks coffee tea day days week weeks month months year " +
+  "years hour hours minute minutes set way up down out off over under get make made now here this that"
+).split(" "));
+
+// Splits a lowercase run-together word into known words, e.g. "mycryptotracker" -> ["my", "crypto", "tracker"].
+// Returns null if the word cannot be fully split into known words.
+function splitKnownWords(word) {
+  const n = word.length;
+  const best = new Array(n + 1).fill(null);
+  best[0] = [];
+  for (let i = 0; i < n; i++) {
+    if (!best[i]) continue;
+    for (let j = i + 1; j <= n; j++) {
+      const piece = word.slice(i, j);
+      if (!KNOWN_WORDS.has(piece)) continue;
+      const candidate = [...best[i], piece];
+      if (!best[j] || candidate.length < best[j].length) best[j] = candidate;
+    }
+  }
+  return best[n];
+}
+
 // "https://my-crypto-tracker.netlify.app/x" -> "My Crypto Tracker"
 function titleFromUrl(href) {
   const host = hostOf(href);
@@ -109,13 +161,30 @@ function titleFromUrl(href) {
 
   const words = label
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // "MyTracker" -> "My Tracker"
+    .replace(/([a-zA-Z])(\d)/g, "$1 $2") // "tracker2" -> "tracker 2"
+    .replace(/(\d)([a-zA-Z])/g, "$1 $2") // "2go" -> "2 go"
     .split(/[\s\-_+.]+/)
-    .filter(Boolean);
+    .filter(Boolean)
+    .flatMap((w) => {
+      // Split run-together lowercase words such as "mycryptotracker" when every piece is known.
+      const lower = w.toLowerCase();
+      if (/^[a-z]{6,}$/.test(lower)) {
+        const pieces = splitKnownWords(lower);
+        if (pieces) return pieces;
+      }
+      return [w];
+    });
 
   const title = words
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
   return title || host;
+}
+
+// Titles are always generated from the address (there is no custom title yet), so the
+// display title is recalculated each time. This also fixes titles saved before the splitting rules existed.
+function displayTitle(item) {
+  return titleFromUrl(item.url) || item.title || "";
 }
 
 // ---------- Install (Android/Chrome and desktop Chromium) ----------
@@ -182,6 +251,7 @@ onAuthStateChanged(auth, (user) => {
     els.empty.hidden = true;
     items = [];
     lastSignature = null;
+    setEditing(false);
     return;
   }
 
@@ -257,9 +327,19 @@ els.form.addEventListener("submit", async (event) => {
   }
 });
 
+// One Edit button for the whole list. In edit mode every card shows its drag handle and delete button.
+function setEditing(on) {
+  editing = on;
+  els.list.classList.toggle("editing", on);
+  els.editBtn.textContent = on ? "Done" : "Edit";
+  els.editBtn.setAttribute("aria-pressed", String(on));
+}
+
+els.editBtn.addEventListener("click", () => setEditing(!editing));
+
 async function removeLink(item) {
   if (!auth.currentUser) return;
-  if (!confirm(`Delete "${item.title}"?`)) return;
+  if (!confirm(`Delete "${displayTitle(item)}"?`)) return;
   try {
     await deleteDoc(linkRef(item.id));
   } catch (err) {
@@ -272,7 +352,7 @@ let lastSignature = null;
 
 // Only rebuild the cards when something visible changed, so hover and clicks are never interrupted.
 function renderLinks(list) {
-  const signature = list.map((i) => `${i.id}|${i.order}|${i.title}|${i.url}`).join("\n");
+  const signature = list.map((i) => `${i.id}|${i.order}|${i.url}`).join("\n");
   if (signature !== lastSignature) {
     lastSignature = signature;
     els.list.replaceChildren(...list.map(makeCard));
@@ -293,15 +373,16 @@ function makeCard(item) {
 
   const title = document.createElement("span");
   title.className = "card-title";
-  title.textContent = item.title;
+  title.textContent = displayTitle(item);
 
   link.append(makeLogo(item), title);
 
   // The grip is the only drag target, so scrolling and tapping the card still work normally.
+  // Grip and delete are hidden until Edit is pressed (see .list.editing in styles.css).
   const handle = document.createElement("button");
   handle.type = "button";
-  handle.className = "card-handle";
-  handle.setAttribute("aria-label", `Drag to reorder ${item.title}`);
+  handle.className = "card-handle card-action";
+  handle.setAttribute("aria-label", `Drag to reorder ${displayTitle(item)}`);
   handle.title = "Drag to reorder";
   handle.textContent = "⠿";
   handle.addEventListener("pointerdown", startDrag);
@@ -311,8 +392,8 @@ function makeCard(item) {
 
   const del = document.createElement("button");
   del.type = "button";
-  del.className = "icon-btn";
-  del.setAttribute("aria-label", `Delete ${item.title}`);
+  del.className = "icon-btn card-action";
+  del.setAttribute("aria-label", `Delete ${displayTitle(item)}`);
   del.title = "Delete";
   del.textContent = "✕";
   del.addEventListener("click", () => removeLink(item));
@@ -349,7 +430,7 @@ function makeLogo(item) {
       return;
     }
     wrap.classList.add("fallback");
-    wrap.textContent = (item.title.charAt(0) || "?").toUpperCase();
+    wrap.textContent = (displayTitle(item).charAt(0) || "?").toUpperCase();
   });
   img.src = sources[0];
 
