@@ -70,37 +70,6 @@
     </main>
   </div>
 
-  <!-- Edit a link -->
-  <dialog id="edit-dialog" class="edit-dialog">
-    <form id="edit-form" class="edit-form" autocomplete="off">
-      <h2>Edit link</h2>
-      <label class="field">
-        <span>Title</span>
-        <input id="edit-title" class="input" type="text" maxlength="120" placeholder="Automatic from the website if empty" />
-      </label>
-      <label class="field">
-        <span>Website</span>
-        <input id="edit-url" class="input" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" required />
-      </label>
-      <p id="edit-status" class="status" role="alert" hidden></p>
-      <div class="edit-actions">
-        <button id="edit-cancel" class="btn btn-ghost" type="button">Cancel</button>
-        <button id="edit-save" class="btn btn-primary" type="submit">Save</button>
-      </div>
-    </form>
-  </dialog>
-
-  <!-- Website viewer (opens inside the app) -->
-  <div id="viewer" class="viewer" hidden>
-    <header class="viewer-bar">
-      <button id="viewer-close" class="btn btn-ghost btn-small" type="button" aria-label="Close">✕</button>
-      <span id="viewer-title" class="viewer-title"></span>
-      <a id="viewer-open" class="btn btn-primary btn-small" href="#" rel="noopener noreferrer">Open in app</a>
-    </header>
-    <iframe id="viewer-frame" class="viewer-frame" title="Website"></iframe>
-    <p class="viewer-hint muted">Some sites don't allow being shown inside other apps. If the page is blank, tap “Open in app”.</p>
-  </div>
-
   <script type="module" src="/app.js"></script>
 </body>
 </html>
