@@ -1,6 +1,6 @@
 // Caches only this site's app files so the app opens offline-ish and loads fast.
 // Your links live in Firestore and are never cached here.
-const CACHE = "tracker-hub-v1";
+const CACHE = "tracker-hub-v2";
 const APP_FILES = [
   "/",
   "/index.html",

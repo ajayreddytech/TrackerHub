@@ -51,14 +51,14 @@
       </div>
       <div class="user">
         <span id="user-name" class="user-name"></span>
+        <button id="install-btn" class="btn btn-primary btn-small" type="button" hidden>Install</button>
         <button id="signout-btn" class="btn btn-ghost" type="button">Sign out</button>
       </div>
     </header>
 
     <section class="add-section">
       <form id="add-form" class="add-form" autocomplete="off">
-        <input id="url-input" class="input" type="text" inputmode="url" placeholder="Paste a website, e.g. my-tracker.netlify.app" autocapitalize="off" autocorrect="off" spellcheck="false" required />
-        <input id="title-input" class="input" type="text" placeholder="Title (optional, auto if empty)" maxlength="120" />
+        <input id="url-input" class="input" type="text" inputmode="url" placeholder="Paste a website, e.g. netlify.com" autocapitalize="off" autocorrect="off" spellcheck="false" required />
         <button id="add-btn" class="btn btn-primary" type="submit">Add link</button>
       </form>
       <p id="status" class="status" role="alert" hidden></p>

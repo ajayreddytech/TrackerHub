@@ -4,9 +4,10 @@ A personal Progressive Web App that keeps all your tracker links in one place.
 Sign in with Google, paste a website, and it's saved to Firestore under your account.
 The title is taken from the address (`my-crypto-tracker.netlify.app` → "My Crypto Tracker") unless you type your own.
 
-- Phone: one link per row. Desktop: 2–4 columns depending on width.
+- Each link shows its site's logo and an auto-generated title. The URL is not shown.
+- Reorder by dragging the ⠿ handle on a card. The order is saved to Firestore.
 - Installable; opens fullscreen on Android/Chrome, standalone on iPhone.
-- Data only in Firestore. Nothing is written to localStorage, IndexedDB or cookies by the app.
+- Data lives in Firestore. Firebase keeps your sign-in in the browser so you stay signed in.
 
 ## Files
 
@@ -45,8 +46,8 @@ The title is taken from the address (`my-crypto-tracker.netlify.app` → "My Cry
 
 ## Things to know
 
-- **Sign-in each time the app is fully closed.** Firebase normally keeps your login in browser storage. This app disables that to honour "nothing in local storage". To keep users signed in across restarts, change `inMemoryPersistence` to `browserLocalPersistence` in `app.js`; that is a one-line change.
-- Firebase's Google sign-in popup may use short-lived browser storage internally for its own handshake. The app code does not save your data or session itself.
+- **Staying signed in:** the app uses `browserLocalPersistence`, so you stay signed in after closing the app. To require sign-in every time, change it to `inMemoryPersistence` in `app.js`.
+- **Logos** are loaded from Google's favicon service using each site's domain, so that domain is sent to Google. If you don't want that, remove `makeLogo` in `app.js` and show only the first letter.
 - The service worker caches only this site's HTML/CSS/JS/icons so the app loads instantly. Your links are never cached by it.
 - Firestore's offline cache is memory-only, so adding links while offline will not sync until you are back online.
 - Publishing `firestore.rules` is required; without it the app shows "Firestore blocked this request".

@@ -6,7 +6,7 @@ import {
   signOut,
   onAuthStateChanged,
   setPersistence,
-  inMemoryPersistence,
+  browserLocalPersistence,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore,
@@ -15,9 +15,8 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  query,
-  orderBy,
   serverTimestamp,
+  writeBatch,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -25,11 +24,9 @@ import { firebaseConfig } from "./firebase-config.js";
 const configured = !firebaseConfig.apiKey.startsWith("REPLACE");
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-// Firestore's default cache is memory-only (no IndexedDB), so nothing is kept on the device.
 const db = getFirestore(app);
-// Login session is kept in memory only: nothing is saved to the browser's storage.
-// Trade-off: you sign in again each time the app is fully closed and reopened.
-await setPersistence(auth, inMemoryPersistence);
+// Stay signed in across app restarts (Firebase keeps the session in this browser).
+await setPersistence(auth, browserLocalPersistence);
 
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
@@ -39,10 +36,10 @@ const els = {
   app: $("app-screen"),
   loginBtn: $("login-btn"),
   signOutBtn: $("signout-btn"),
+  installBtn: $("install-btn"),
   userName: $("user-name"),
   form: $("add-form"),
   url: $("url-input"),
-  title: $("title-input"),
   addBtn: $("add-btn"),
   list: $("list"),
   empty: $("empty"),
@@ -51,6 +48,9 @@ const els = {
 };
 
 let unsubscribeLinks = null;
+let items = []; // latest links, in display order
+let pendingItems = null; // snapshot received while a drag is in progress
+let dragging = null; // state of the active drag, if any
 
 // Shows the message on whichever screen is visible (sign-in or app).
 function showStatus(message) {
@@ -118,6 +118,31 @@ function titleFromUrl(href) {
   return title || host;
 }
 
+// ---------- Install (Android/Chrome and desktop Chromium) ----------
+let deferredInstall = null;
+const isInstalled = () =>
+  window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstall = event;
+  if (!isInstalled()) els.installBtn.hidden = false;
+});
+
+window.addEventListener("appinstalled", () => {
+  deferredInstall = null;
+  els.installBtn.hidden = true;
+});
+
+els.installBtn.addEventListener("click", async () => {
+  const prompt = deferredInstall;
+  if (!prompt) return;
+  prompt.prompt();
+  await prompt.userChoice;
+  deferredInstall = null;
+  els.installBtn.hidden = true;
+});
+
 // ---------- Auth ----------
 if (!configured) {
   showStatus("Firebase is not configured yet. Edit firebase-config.js with your project settings.");
@@ -155,6 +180,7 @@ onAuthStateChanged(auth, (user) => {
     els.login.hidden = false;
     els.list.replaceChildren();
     els.empty.hidden = true;
+    items = [];
     return;
   }
 
@@ -165,20 +191,52 @@ onAuthStateChanged(auth, (user) => {
 });
 
 // ---------- Firestore: users/{uid}/links/{linkId} ----------
+// Each link has an `order` number. Lower numbers show first. New links get a
+// negative number (newest first), and a drag-and-drop writes 0, 1, 2, ... in the new order.
 function linksCollection(uid) {
   return collection(db, "users", uid, "links");
 }
 
+function linkRef(id) {
+  return doc(db, "users", auth.currentUser.uid, "links", id);
+}
+
+function sortKey(item) {
+  if (typeof item.order === "number") return item.order;
+  const ms = item.createdAt?.toMillis?.();
+  return ms !== undefined ? -ms : -Date.now();
+}
+
 function listenToLinks(uid) {
-  const q = query(linksCollection(uid), orderBy("createdAt", "desc"));
   unsubscribeLinks = onSnapshot(
-    q,
+    linksCollection(uid),
     (snapshot) => {
-      const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const list = snapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => sortKey(a) - sortKey(b));
+      migrateMissingOrder(list);
+      if (dragging) {
+        pendingItems = list; // don't redraw under the finger; apply after the drop
+        return;
+      }
+      items = list;
       renderLinks(items);
     },
     (err) => showStatus(friendlyError(err))
   );
+}
+
+// Links saved before reordering existed get an `order` value once, so they can be sorted and moved.
+async function migrateMissingOrder(list) {
+  const missing = list.filter((item) => typeof item.order !== "number" && item.createdAt?.toMillis);
+  if (!missing.length || !auth.currentUser) return;
+  const batch = writeBatch(db);
+  for (const item of missing) batch.update(linkRef(item.id), { order: sortKey(item) });
+  try {
+    await batch.commit();
+  } catch (err) {
+    showStatus(friendlyError(err));
+  }
 }
 
 els.form.addEventListener("submit", async (event) => {
@@ -187,11 +245,11 @@ els.form.addEventListener("submit", async (event) => {
 
   const url = normalizeUrl(els.url.value);
   if (!url) {
-    showStatus("Enter a valid website address, like my-tracker.netlify.app");
+    showStatus("Enter a valid website address, like netlify.com");
     return;
   }
 
-  const title = (els.title.value.trim() || titleFromUrl(url)).slice(0, 120);
+  const title = titleFromUrl(url).slice(0, 120);
 
   els.addBtn.disabled = true;
   showStatus("");
@@ -199,6 +257,7 @@ els.form.addEventListener("submit", async (event) => {
     await addDoc(linksCollection(auth.currentUser.uid), {
       url,
       title,
+      order: -Date.now(),
       createdAt: serverTimestamp(),
     });
     els.form.reset();
@@ -214,21 +273,22 @@ async function removeLink(item) {
   if (!auth.currentUser) return;
   if (!confirm(`Delete "${item.title}"?`)) return;
   try {
-    await deleteDoc(doc(db, "users", auth.currentUser.uid, "links", item.id));
+    await deleteDoc(linkRef(item.id));
   } catch (err) {
     showStatus(friendlyError(err));
   }
 }
 
 // ---------- Rendering (textContent only, never innerHTML, so stored data can't inject markup) ----------
-function renderLinks(items) {
-  els.list.replaceChildren(...items.map(makeCard));
-  els.empty.hidden = items.length > 0;
+function renderLinks(list) {
+  els.list.replaceChildren(...list.map(makeCard));
+  els.empty.hidden = list.length > 0;
 }
 
 function makeCard(item) {
   const card = document.createElement("article");
   card.className = "card";
+  card.dataset.id = item.id;
 
   const link = document.createElement("a");
   link.className = "card-main";
@@ -240,11 +300,19 @@ function makeCard(item) {
   title.className = "card-title";
   title.textContent = item.title;
 
-  const host = document.createElement("span");
-  host.className = "card-host";
-  host.textContent = hostOf(item.url);
+  link.append(makeLogo(item), title);
 
-  link.append(title, host);
+  // The grip is the only drag target, so scrolling and tapping the card still work normally.
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "card-handle";
+  handle.setAttribute("aria-label", `Drag to reorder ${item.title}`);
+  handle.title = "Drag to reorder";
+  handle.textContent = "⠿";
+  handle.addEventListener("pointerdown", startDrag);
+  handle.addEventListener("pointermove", onDragMove);
+  handle.addEventListener("pointerup", onDragEnd);
+  handle.addEventListener("pointercancel", onDragEnd);
 
   const del = document.createElement("button");
   del.type = "button";
@@ -254,8 +322,132 @@ function makeCard(item) {
   del.textContent = "✕";
   del.addEventListener("click", () => removeLink(item));
 
-  card.append(link, del);
+  card.append(link, handle, del);
   return card;
+}
+
+// The site's icon, fetched by domain. If there is no icon, show the first letter of the title instead.
+function makeLogo(item) {
+  const wrap = document.createElement("span");
+  wrap.className = "card-logo";
+
+  const img = document.createElement("img");
+  img.alt = "";
+  img.loading = "lazy";
+  img.referrerPolicy = "no-referrer";
+  img.addEventListener("error", () => {
+    wrap.classList.add("fallback");
+    wrap.textContent = (item.title.charAt(0) || "?").toUpperCase();
+  });
+  img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostOf(item.url))}&sz=128`;
+
+  wrap.append(img);
+  return wrap;
+}
+
+// ---------- Drag to reorder (pointer events, so it works with touch and mouse) ----------
+const AUTO_SCROLL_EDGE = 90; // px from the top/bottom of the screen where scrolling starts
+const AUTO_SCROLL_STEP = 14; // px per frame
+
+function currentIds() {
+  return [...els.list.children].map((card) => card.dataset.id);
+}
+
+function startDrag(event) {
+  if (event.button > 0) return;
+  event.preventDefault();
+  const handle = event.currentTarget;
+  handle.setPointerCapture(event.pointerId);
+  const card = handle.closest(".card");
+  dragging = {
+    card,
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    startIds: currentIds(),
+    frame: null,
+  };
+  card.classList.add("dragging");
+  document.body.classList.add("is-reordering");
+  dragging.frame = requestAnimationFrame(autoScroll);
+}
+
+function onDragMove(event) {
+  if (!dragging || event.pointerId !== dragging.pointerId) return;
+  dragging.x = event.clientX;
+  dragging.y = event.clientY;
+  moveDraggedCard(dragging.x, dragging.y);
+}
+
+// Moves the dragged card into the slot under the pointer.
+function moveDraggedCard(x, y) {
+  const under = document.elementFromPoint(x, y)?.closest(".card");
+  if (!under || under === dragging.card || under.parentElement !== els.list) return;
+  const cards = [...els.list.children];
+  const draggedFirst = cards.indexOf(dragging.card) < cards.indexOf(under);
+  els.list.insertBefore(dragging.card, draggedFirst ? under.nextSibling : under);
+}
+
+// Scrolls the page when the finger is near the top or bottom edge.
+function autoScroll() {
+  if (!dragging) return;
+  const { y } = dragging;
+  let delta = 0;
+  if (y < AUTO_SCROLL_EDGE) delta = -AUTO_SCROLL_STEP;
+  else if (y > window.innerHeight - AUTO_SCROLL_EDGE) delta = AUTO_SCROLL_STEP;
+  if (delta) {
+    window.scrollBy(0, delta);
+    moveDraggedCard(dragging.x, dragging.y);
+  }
+  dragging.frame = requestAnimationFrame(autoScroll);
+}
+
+async function onDragEnd(event) {
+  if (!dragging || event.pointerId !== dragging.pointerId) return;
+  const { card, startIds, frame } = dragging;
+  cancelAnimationFrame(frame);
+  dragging = null;
+  card.classList.remove("dragging");
+  document.body.classList.remove("is-reordering");
+
+  const newIds = currentIds();
+  const changed = newIds.join("|") !== startIds.join("|");
+
+  if (!changed) {
+    if (pendingItems) {
+      items = pendingItems;
+      pendingItems = null;
+      renderLinks(items);
+    }
+    return;
+  }
+
+  // Use the latest data if a snapshot arrived mid-drag, then store the new order.
+  if (pendingItems) {
+    items = pendingItems;
+    pendingItems = null;
+  }
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const ordered = newIds.map((id) => byId.get(id)).filter(Boolean);
+
+  const batch = writeBatch(db);
+  let writes = 0;
+  ordered.forEach((item, index) => {
+    if (item.order !== index) {
+      batch.update(linkRef(item.id), { order: index });
+      item.order = index;
+      writes++;
+    }
+  });
+  items = ordered;
+  renderLinks(items);
+
+  if (writes === 0) return;
+  try {
+    await batch.commit();
+  } catch (err) {
+    showStatus(friendlyError(err));
+  }
 }
 
 // ---------- Service worker (app files only; data never goes through it) ----------

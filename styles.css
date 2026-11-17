@@ -289,7 +289,7 @@ body {
 
 @media (min-width: 640px) {
   .add-form {
-    grid-template-columns: 2fr 1.2fr auto;
+    grid-template-columns: 1fr auto;
   }
 }
 
@@ -311,9 +311,9 @@ body {
 .card-main {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 16px 18px;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
   text-decoration: none;
   color: inherit;
   min-width: 0;
@@ -323,17 +323,38 @@ body {
 .card-title {
   font-weight: 650;
   font-size: 1.05rem;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.card-host {
-  color: var(--muted);
-  font-size: 0.82rem;
+.card-logo {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.card-logo img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.card-logo.fallback {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+
+.btn-small {
+  padding: 7px 12px;
+  font-size: 0.85rem;
 }
 
 .icon-btn {
@@ -349,6 +370,38 @@ body {
 }
 
 .icon-btn:hover { color: var(--danger); background: var(--surface-2); }
+
+/* Drag handle: touch-action none stops the page from scrolling while dragging */
+.card-handle {
+  appearance: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  width: 44px;
+  font-size: 1.2rem;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+}
+
+.card-handle:active { cursor: grabbing; }
+
+.card.dragging {
+  position: relative;
+  z-index: 2;
+  opacity: 0.9;
+  border-color: var(--accent);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.25);
+  transform: scale(1.02);
+}
+
+body.is-reordering {
+  user-select: none;
+  -webkit-user-select: none;
+}
 
 /* ---------- Fullscreen / standalone polish ---------- */
 @media (display-mode: fullscreen), (display-mode: standalone) {
