@@ -17,10 +17,16 @@ service cloud.firestore {
         && request.resource.data.order is number
         && request.resource.data.createdAt == request.time;
 
-      // Updates may only change the position (order) of a link.
+      // Edits may change the title, the website address and the position (order). Nothing else.
       allow update: if request.auth != null
         && request.auth.uid == uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['order'])
+        && request.resource.data.keys().hasOnly(['url', 'title', 'createdAt', 'order'])
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.url is string
+        && request.resource.data.url.size() > 0
+        && request.resource.data.url.size() <= 2000
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
         && request.resource.data.order is number;
     }
 

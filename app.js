@@ -17,6 +17,7 @@ import {
   onSnapshot,
   serverTimestamp,
   writeBatch,
+  updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -45,12 +46,26 @@ const els = {
   empty: $("empty"),
   status: $("status"),
   loginStatus: $("login-status"),
+  editDialog: $("edit-dialog"),
+  editForm: $("edit-form"),
+  editTitle: $("edit-title"),
+  editUrl: $("edit-url"),
+  editSave: $("edit-save"),
+  editCancel: $("edit-cancel"),
+  editStatus: $("edit-status"),
+  viewer: $("viewer"),
+  viewerClose: $("viewer-close"),
+  viewerTitle: $("viewer-title"),
+  viewerOpen: $("viewer-open"),
+  viewerFrame: $("viewer-frame"),
 };
 
 let unsubscribeLinks = null;
 let items = []; // latest links, in display order
 let pendingItems = null; // snapshot received while a drag is in progress
 let dragging = null; // state of the active drag, if any
+let editingItem = null; // link currently open in the edit dialog
+let viewerOpen = false;
 
 // Shows the message on whichever screen is visible (sign-in or app).
 function showStatus(message) {
@@ -78,6 +93,24 @@ function friendlyError(err) {
 // ---------- URL + title helpers ----------
 const GENERIC_LABELS = new Set(["app", "m", "go", "www", "api", "mobile", "web", "links"]);
 
+// Common words used to split run-together names like "mycryptotracker" into "My Crypto Tracker".
+const KNOWN_WORDS = new Set(`
+  my your our the and of for to in on at by go get pay shop store buy sell trade trading
+  crypto coin coins token tokens market markets cap price prices stock stocks fund funds
+  invest investor investing portfolio finance financial bank banking money cash budget
+  expense expenses bill bills tax taxes wallet savings loan loans bitcoin btc eth nft defi
+  tracker track tracking watch watcher alert alerts monitor dash dashboard board chart charts
+  news weather sport sports score scores live daily global world tech science space
+  flight flights travel hotel hotels car cars auto bike home house real estate rent
+  food recipe recipes cook kitchen health fit fitness habit habits workout diet sleep
+  task tasks todo plan planner goal goals calendar timer time schedule work job jobs team
+  note notes book books learn study school class course code dev game games music video
+  photo photos mail cloud drive desk data stats analytics report reports hub lab labs
+  pro plus app apps web site online net link links page pages shopping deal deals
+  energy solar power water green eco pet pets movie movies show shows tv radio podcast
+  sun moon star fire blue red black white gold silver bit bits stake swap yield
+`.split(/\s+/).filter(Boolean));
+
 function normalizeUrl(raw) {
   let value = raw.trim();
   if (!value) return null;
@@ -100,6 +133,25 @@ function hostOf(href) {
   }
 }
 
+// Splits "mycryptotracker" into ["my", "crypto", "tracker"], but only when every piece is a known word.
+function splitRunTogether(word) {
+  const lower = word.toLowerCase();
+  if (!/^[a-z]+$/.test(lower) || lower.length < 6) return null;
+  const n = lower.length;
+  const best = new Array(n + 1).fill(null);
+  best[0] = { score: 0, parts: [] };
+  for (let i = 0; i < n; i++) {
+    if (!best[i]) continue;
+    for (let j = i + 1; j <= n; j++) {
+      const piece = lower.slice(i, j);
+      if (!KNOWN_WORDS.has(piece)) continue;
+      const score = best[i].score + piece.length * piece.length; // prefer longer known words
+      if (!best[j] || score > best[j].score) best[j] = { score, parts: [...best[i].parts, piece] };
+    }
+  }
+  return best[n] && best[n].parts.length > 1 ? best[n].parts : null;
+}
+
 // "https://my-crypto-tracker.netlify.app/x" -> "My Crypto Tracker"
 function titleFromUrl(href) {
   const host = hostOf(href);
@@ -110,11 +162,10 @@ function titleFromUrl(href) {
   const words = label
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // "MyTracker" -> "My Tracker"
     .split(/[\s\-_+.]+/)
-    .filter(Boolean);
+    .filter(Boolean)
+    .flatMap((word) => splitRunTogether(word) ?? [word]);
 
-  const title = words
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  const title = words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
   return title || host;
 }
 
@@ -182,6 +233,7 @@ onAuthStateChanged(auth, (user) => {
     els.empty.hidden = true;
     items = [];
     lastSignature = null;
+    closeViewerNow();
     return;
   }
 
@@ -267,6 +319,90 @@ async function removeLink(item) {
   }
 }
 
+// ---------- Edit dialog (title and website) ----------
+function openEdit(item) {
+  editingItem = item;
+  els.editTitle.value = item.title;
+  els.editUrl.value = item.url;
+  els.editStatus.hidden = true;
+  els.editSave.disabled = false;
+  els.editDialog.showModal();
+}
+
+els.editCancel.addEventListener("click", () => els.editDialog.close());
+els.editDialog.addEventListener("close", () => {
+  editingItem = null;
+});
+
+els.editForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!editingItem || !auth.currentUser) return;
+
+  const url = normalizeUrl(els.editUrl.value);
+  if (!url) {
+    els.editStatus.textContent = "Enter a valid website address, like netlify.com";
+    els.editStatus.hidden = false;
+    return;
+  }
+  // An empty title means "use the automatic title for this website".
+  const title = (els.editTitle.value.trim() || titleFromUrl(url)).slice(0, 120);
+
+  els.editSave.disabled = true;
+  try {
+    await updateDoc(linkRef(editingItem.id), {
+      title,
+      url,
+      order: sortKey(editingItem), // keeps the link's current position
+    });
+    els.editDialog.close();
+  } catch (err) {
+    els.editStatus.textContent = friendlyError(err);
+    els.editStatus.hidden = false;
+  } finally {
+    els.editSave.disabled = false;
+  }
+});
+
+// ---------- In-app viewer (opens a website inside the app) ----------
+const IS_ANDROID = /android/i.test(navigator.userAgent);
+
+// On Android, an intent link opens the installed app that handles this website, or the browser if none is installed.
+function openInAppHref(url) {
+  if (!IS_ANDROID) return url;
+  const u = new URL(url);
+  const scheme = u.protocol.replace(":", "");
+  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=${scheme};action=android.intent.action.VIEW;S.browser_fallback_url=${encodeURIComponent(url)};end`;
+}
+
+function openViewer(item) {
+  els.viewerTitle.textContent = item.title;
+  els.viewerOpen.href = openInAppHref(item.url);
+  if (IS_ANDROID) els.viewerOpen.removeAttribute("target");
+  else els.viewerOpen.target = "_blank";
+  els.viewerFrame.src = item.url;
+  els.viewer.hidden = false;
+  viewerOpen = true;
+  // Pushing a history entry makes the phone's back button close the viewer instead of the app.
+  history.pushState({ viewer: true }, "");
+}
+
+function closeViewerNow() {
+  viewerOpen = false;
+  els.viewer.hidden = true;
+  els.viewerFrame.src = "about:blank";
+}
+
+function closeViewer() {
+  if (!viewerOpen) return;
+  closeViewerNow();
+  if (history.state?.viewer) history.back();
+}
+
+els.viewerClose.addEventListener("click", closeViewer);
+window.addEventListener("popstate", () => {
+  if (viewerOpen) closeViewerNow();
+});
+
 // ---------- Rendering (textContent only, never innerHTML, so stored data can't inject markup) ----------
 let lastSignature = null;
 
@@ -290,12 +426,26 @@ function makeCard(item) {
   link.href = item.url;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
+  // A plain tap opens the website in the app. Ctrl/Cmd-click or middle-click still use a normal new tab.
+  link.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    openViewer(item);
+  });
 
   const title = document.createElement("span");
   title.className = "card-title";
   title.textContent = item.title;
 
   link.append(makeLogo(item), title);
+
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "icon-btn";
+  edit.setAttribute("aria-label", `Edit ${item.title}`);
+  edit.title = "Edit";
+  edit.textContent = "✎";
+  edit.addEventListener("click", () => openEdit(item));
 
   // The grip is the only drag target, so scrolling and tapping the card still work normally.
   const handle = document.createElement("button");
@@ -317,17 +467,20 @@ function makeCard(item) {
   del.textContent = "✕";
   del.addEventListener("click", () => removeLink(item));
 
-  card.append(link, handle, del);
+  card.append(link, edit, handle, del);
   return card;
 }
 
-// The site's own icon first (the most accurate), then icon services, then the first letter of the title.
+// Logo sources, tried in order: the site's own touch icon, its favicon, then icon services.
+// The first letter of the title is used if none of them load.
 function logoSources(url) {
+  const { origin } = new URL(url);
   const host = encodeURIComponent(hostOf(url));
   return [
-    `https://${host}/favicon.ico`,
+    `${origin}/apple-touch-icon.png`,
+    `${origin}/favicon.ico`,
+    `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(origin)}&sz=128`,
     `https://icons.duckduckgo.com/ip3/${host}.ico`,
-    `https://www.google.com/s2/favicons?domain=${host}&sz=128`,
   ];
 }
 

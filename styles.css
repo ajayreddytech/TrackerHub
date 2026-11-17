@@ -362,7 +362,7 @@ body {
   border-left: 1px solid var(--border);
   background: transparent;
   color: var(--muted);
-  width: 48px;
+  width: 40px;
   font-size: 1rem;
   cursor: pointer;
   flex-shrink: 0;
@@ -409,4 +409,90 @@ body.is-reordering {
 
 @media (max-width: 420px) {
   .user-name { display: none; }
+}
+
+/* ---------- Edit dialog ---------- */
+.edit-dialog {
+  width: min(420px, calc(100% - 32px));
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.edit-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+
+.edit-form {
+  display: grid;
+  gap: 14px;
+}
+
+.edit-form h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ---------- In-app website viewer ---------- */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding:
+    env(safe-area-inset-top)
+    env(safe-area-inset-right)
+    0
+    env(safe-area-inset-left);
+}
+
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px var(--gutter);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#viewer-open { text-decoration: none; }
+
+.viewer-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.viewer-hint {
+  margin: 0;
+  padding: 8px var(--gutter) calc(8px + env(safe-area-inset-bottom));
+  font-size: 0.8rem;
+  text-align: center;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
 }
