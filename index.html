@@ -74,6 +74,39 @@
     </main>
   </div>
 
+  <!-- Edit a link: title, address and logo -->
+  <dialog id="edit-dialog" class="edit-dialog" aria-labelledby="edit-heading">
+    <form id="edit-form" class="edit-form" autocomplete="off">
+      <h3 id="edit-heading">Edit link</h3>
+
+      <label class="field">
+        <span>Title</span>
+        <input id="edit-title" class="input" type="text" maxlength="120" placeholder="Automatic from the address" />
+      </label>
+
+      <label class="field">
+        <span>Website address</span>
+        <input id="edit-url" class="input" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" required />
+      </label>
+
+      <div class="logo-field">
+        <span id="edit-logo-preview" class="card-logo logo-preview" aria-hidden="true"><img id="edit-logo-img" alt="" referrerpolicy="no-referrer" /></span>
+        <label class="field grow">
+          <span>Logo image address</span>
+          <input id="edit-logo" class="input" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Automatic from the website" />
+        </label>
+      </div>
+
+      <p class="hint muted">Leave the title or logo empty to use the automatic one.</p>
+      <p id="edit-status" class="status" role="alert" hidden></p>
+
+      <div class="edit-actions">
+        <button id="edit-cancel" class="btn btn-ghost" type="button">Cancel</button>
+        <button id="edit-save" class="btn btn-primary" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <script type="module" src="/app.js"></script>
 </body>
 </html>

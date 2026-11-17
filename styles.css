@@ -48,6 +48,8 @@ html, body {
 
 body {
   min-height: 100dvh;
+  /* Transparent so the animated background (below) shows through. The color comes from html. */
+  background: transparent;
   /* Keep content clear of notches and rounded corners in fullscreen/standalone */
   padding:
     env(safe-area-inset-top)
@@ -236,7 +238,7 @@ body {
 
 .add-section {
   padding: 16px var(--gutter) 4px;
-  max-width: 1400px;
+  max-width: 640px;
   width: 100%;
   margin: 0 auto;
 }
@@ -258,7 +260,7 @@ body {
 .content {
   flex: 1;
   width: 100%;
-  max-width: 1400px;
+  max-width: 640px;
   margin: 0 auto;
   padding: 16px var(--gutter) 40px;
 }
@@ -283,23 +285,12 @@ body {
   color: var(--muted);
 }
 
-/* ---------- Link list: one column on phones, grid on larger screens ---------- */
+/* ---------- Link list: one centered column on every screen size ---------- */
 .list {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 12px;
-}
-
-@media (min-width: 640px) {
-  .list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (min-width: 1000px) {
-  .list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-@media (min-width: 1400px) {
-  .list { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 @media (min-width: 640px) {
@@ -311,6 +302,8 @@ body {
 .card {
   display: flex;
   align-items: stretch;
+  width: 100%;
+  max-width: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -318,6 +311,15 @@ body {
   min-width: 0;
   /* No transitions on the card: animating its border/transform on hover is what made it flicker. */
   backface-visibility: hidden;
+}
+
+/* On larger screens each card is only as wide as its content (never wider than 560px). */
+@media (min-width: 640px) {
+  .list .card {
+    width: fit-content;
+    min-width: 340px;
+    max-width: min(100%, 560px);
+  }
 }
 
 .card:hover { border-color: var(--accent); }
@@ -364,6 +366,115 @@ body {
   color: var(--accent);
   font-weight: 700;
   font-size: 1.15rem;
+}
+
+/* ---------- Edit dialog ---------- */
+.edit-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.edit-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+}
+
+.edit-form {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+}
+
+.edit-form h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.field.grow { flex: 1; }
+
+.logo-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.logo-field .field { flex: 1; }
+
+.logo-preview {
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--border);
+}
+
+.logo-preview img {
+  width: 30px;
+  height: 30px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ---------- Animated background (soft drifting color glows behind the page) ---------- */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  width: 70vmax;
+  height: 70vmax;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.32;
+  z-index: -1;
+  pointer-events: none;
+  animation: drift 26s ease-in-out infinite alternate;
+}
+
+body::before {
+  top: -30vmax;
+  left: -25vmax;
+  background: var(--accent);
+}
+
+body::after {
+  bottom: -30vmax;
+  right: -25vmax;
+  background: #a855f7;
+  animation-duration: 32s;
+  animation-delay: -12s;
+}
+
+@keyframes drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(12vw, 8vh, 0) scale(1.12); }
+  100% { transform: translate3d(-6vw, 14vh, 0) scale(0.96); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after { animation: none; }
 }
 
 .btn-small {

@@ -17,6 +17,7 @@ import {
   onSnapshot,
   serverTimestamp,
   writeBatch,
+  updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -46,13 +47,23 @@ const els = {
   empty: $("empty"),
   status: $("status"),
   loginStatus: $("login-status"),
+  editDialog: $("edit-dialog"),
+  editForm: $("edit-form"),
+  editTitle: $("edit-title"),
+  editUrl: $("edit-url"),
+  editLogo: $("edit-logo"),
+  editLogoImg: $("edit-logo-img"),
+  editSave: $("edit-save"),
+  editCancel: $("edit-cancel"),
+  editStatus: $("edit-status"),
 };
 
 let unsubscribeLinks = null;
 let items = []; // latest links, in display order
 let pendingItems = null; // snapshot received while a drag is in progress
 let dragging = null; // state of the active drag, if any
-let editing = false; // when true, cards show the drag handle and delete button
+let editing = false; // when true, cards show the drag handle, edit and delete buttons
+let editTarget = null; // the link currently open in the edit dialog
 
 // Shows the message on whichever screen is visible (sign-in or app).
 function showStatus(message) {
@@ -181,10 +192,10 @@ function titleFromUrl(href) {
   return title || host;
 }
 
-// Titles are always generated from the address (there is no custom title yet), so the
-// display title is recalculated each time. This also fixes titles saved before the splitting rules existed.
+// A title the user typed (customTitle) wins. Otherwise the title is generated from the address,
+// so it is recalculated each time. This also fixes titles saved before the splitting rules existed.
 function displayTitle(item) {
-  return titleFromUrl(item.url) || item.title || "";
+  return (item.customTitle || "").trim() || titleFromUrl(item.url) || item.title || "";
 }
 
 // ---------- Install (Android/Chrome and desktop Chromium) ----------
@@ -347,12 +358,90 @@ async function removeLink(item) {
   }
 }
 
+// ---------- Edit dialog: title, address and logo ----------
+function showEditStatus(message) {
+  els.editStatus.textContent = message || "";
+  els.editStatus.hidden = !message;
+}
+
+// Shows the logo the link will get: the custom one if valid, otherwise the automatic one for the address.
+function updateLogoPreview() {
+  const custom = els.editLogo.value.trim() ? normalizeUrl(els.editLogo.value) : null;
+  const site = normalizeUrl(els.editUrl.value);
+  const src = custom || (site ? logoSources(site)[0] : "");
+  els.editLogoImg.hidden = !src;
+  els.editLogoImg.removeAttribute("src");
+  if (src) els.editLogoImg.src = src;
+}
+
+els.editLogoImg.addEventListener("error", () => {
+  els.editLogoImg.hidden = true;
+});
+els.editLogoImg.addEventListener("load", () => {
+  els.editLogoImg.hidden = false;
+});
+els.editLogo.addEventListener("input", updateLogoPreview);
+els.editUrl.addEventListener("input", updateLogoPreview);
+
+function openEditor(item) {
+  editTarget = item;
+  els.editTitle.value = item.customTitle || "";
+  els.editTitle.placeholder = titleFromUrl(item.url);
+  els.editUrl.value = item.url;
+  els.editLogo.value = item.customLogo || "";
+  showEditStatus("");
+  updateLogoPreview();
+  els.editDialog.showModal();
+  els.editTitle.focus();
+}
+
+els.editCancel.addEventListener("click", () => els.editDialog.close());
+els.editDialog.addEventListener("close", () => {
+  editTarget = null;
+});
+
+els.editForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!editTarget || !auth.currentUser) return;
+
+  const url = normalizeUrl(els.editUrl.value);
+  if (!url) {
+    showEditStatus("Enter a valid website address, like netlify.com");
+    return;
+  }
+
+  let customLogo = "";
+  if (els.editLogo.value.trim()) {
+    customLogo = normalizeUrl(els.editLogo.value) || "";
+    if (!customLogo) {
+      showEditStatus("Enter a valid logo address, like https://example.com/logo.png");
+      return;
+    }
+  }
+
+  const customTitle = els.editTitle.value.trim().slice(0, 120);
+
+  els.editSave.disabled = true;
+  showEditStatus("");
+  try {
+    // Writes all three fields, so an empty title or logo goes back to the automatic one.
+    await updateDoc(linkRef(editTarget.id), { url, customTitle, customLogo });
+    els.editDialog.close();
+  } catch (err) {
+    showEditStatus(friendlyError(err));
+  } finally {
+    els.editSave.disabled = false;
+  }
+});
+
 // ---------- Rendering (textContent only, never innerHTML, so stored data can't inject markup) ----------
 let lastSignature = null;
 
 // Only rebuild the cards when something visible changed, so hover and clicks are never interrupted.
 function renderLinks(list) {
-  const signature = list.map((i) => `${i.id}|${i.order}|${i.url}`).join("\n");
+  const signature = list
+    .map((i) => JSON.stringify([i.id, i.order, i.url, i.customTitle || "", i.customLogo || ""]))
+    .join("\n");
   if (signature !== lastSignature) {
     lastSignature = signature;
     els.list.replaceChildren(...list.map(makeCard));
@@ -378,7 +467,7 @@ function makeCard(item) {
   link.append(makeLogo(item), title);
 
   // The grip is the only drag target, so scrolling and tapping the card still work normally.
-  // Grip and delete are hidden until Edit is pressed (see .list.editing in styles.css).
+  // Grip, edit and delete are hidden until Edit is pressed (see .list.editing in styles.css).
   const handle = document.createElement("button");
   handle.type = "button";
   handle.className = "card-handle card-action";
@@ -390,6 +479,14 @@ function makeCard(item) {
   handle.addEventListener("pointerup", onDragEnd);
   handle.addEventListener("pointercancel", onDragEnd);
 
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "icon-btn card-action";
+  edit.setAttribute("aria-label", `Edit ${displayTitle(item)}`);
+  edit.title = "Edit";
+  edit.textContent = "✎";
+  edit.addEventListener("click", () => openEditor(item));
+
   const del = document.createElement("button");
   del.type = "button";
   del.className = "icon-btn card-action";
@@ -398,25 +495,27 @@ function makeCard(item) {
   del.textContent = "✕";
   del.addEventListener("click", () => removeLink(item));
 
-  card.append(link, handle, del);
+  card.append(link, handle, edit, del);
   return card;
 }
 
-// The site's own icon first (the most accurate), then icon services, then the first letter of the title.
-function logoSources(url) {
+// The logo the user chose (if any) first, then the site's own icon (the most accurate),
+// then icon services, then the first letter of the title.
+function logoSources(url, customLogo = "") {
   const host = encodeURIComponent(hostOf(url));
-  return [
+  const automatic = [
     `https://${host}/favicon.ico`,
     `https://icons.duckduckgo.com/ip3/${host}.ico`,
     `https://www.google.com/s2/favicons?domain=${host}&sz=128`,
   ];
+  return customLogo ? [customLogo, ...automatic] : automatic;
 }
 
 function makeLogo(item) {
   const wrap = document.createElement("span");
   wrap.className = "card-logo";
 
-  const sources = logoSources(item.url);
+  const sources = logoSources(item.url, item.customLogo);
   let next = 0;
 
   const img = document.createElement("img");
