@@ -58,16 +58,28 @@
 
     <section class="add-section">
       <form id="add-form" class="add-form" autocomplete="off">
-        <input id="url-input" class="input" type="text" inputmode="url" placeholder="Paste a website, e.g. netlify.com" autocapitalize="off" autocorrect="off" spellcheck="false" required />
-        <button id="add-btn" class="btn btn-primary" type="submit">Add link</button>
+        <input id="url-input" class="input" type="text" inputmode="url" placeholder="Search, or paste a website to add it" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <button id="add-btn" class="btn btn-primary" type="submit">Add</button>
       </form>
       <p id="status" class="status" role="alert" hidden></p>
     </section>
 
     <main class="content">
       <div class="list-bar">
-        <h2 class="list-title">Your links</h2>
-        <button id="edit-btn" class="btn btn-ghost" type="button" aria-pressed="false">Edit</button>
+        <div class="view-toggle" role="group" aria-label="Choose what to show">
+          <button id="view-checklist" class="view-btn" type="button" aria-pressed="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l2 2 3-3"/><path d="M3 14l2 2 3-3"/><path d="M12 6h9"/><path d="M12 14h9"/></svg>
+            Checklist
+          </button>
+          <button id="view-links" class="view-btn" type="button" aria-pressed="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+            Links
+          </button>
+        </div>
+        <div class="list-actions">
+          <button id="cancel-btn" class="btn btn-ghost" type="button" hidden>Cancel</button>
+          <button id="edit-btn" class="btn btn-ghost" type="button" aria-pressed="false"><span class="btn-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span><span class="btn-label">Edit</span></button>
+        </div>
       </div>
       <div id="list" class="list"></div>
       <p id="empty" class="empty muted" hidden>No links yet. Add your first tracker above.</p>

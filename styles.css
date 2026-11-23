@@ -537,6 +537,99 @@ body.is-reordering {
   pointer-events: none;
 }
 
+/* ---------- Checklist / Links switch and checklist rows ---------- */
+.list-bar { flex-wrap: wrap; }
+
+.list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.view-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 7px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.view-btn + .view-btn { border-left: 1px solid var(--border); }
+.view-btn[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+.view-btn svg { flex-shrink: 0; }
+
+/* Bigger switch and Edit button: the toggle takes the free width of the bar. */
+.list-bar .view-toggle { flex: 1; display: flex; min-width: 0; }
+.list-bar .view-btn {
+  flex: 1;
+  justify-content: center;
+  font-size: 1.1rem;
+  padding: 14px 18px;
+  gap: 10px;
+}
+.list-bar .view-btn svg { width: 22px; height: 22px; }
+.list-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.05rem;
+  padding: 14px 22px;
+}
+.list-actions .btn svg { flex-shrink: 0; }
+
+.check-box {
+  appearance: none;
+  flex-shrink: 0;
+  align-self: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 14px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.check-box[aria-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.check-card .card-main { padding-left: 12px; }
+.check-card.done .card-title { color: var(--muted); text-decoration: line-through; }
+.check-card.done .card-logo { opacity: 0.5; }
+
+.check-fields {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.check-input { padding: 8px 10px; font-size: 0.9rem; }
+
 /* ---------- Fullscreen / standalone polish ---------- */
 @media (display-mode: fullscreen), (display-mode: standalone) {
   .topbar { padding-top: calc(env(safe-area-inset-top) + 10px); }

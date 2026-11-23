@@ -39,6 +39,9 @@ const els = {
   signOutBtn: $("signout-btn"),
   installBtn: $("install-btn"),
   editBtn: $("edit-btn"),
+  cancelBtn: $("cancel-btn"),
+  viewChecklistBtn: $("view-checklist"),
+  viewLinksBtn: $("view-links"),
   userName: $("user-name"),
   form: $("add-form"),
   url: $("url-input"),
@@ -64,6 +67,11 @@ let pendingItems = null; // snapshot received while a drag is in progress
 let dragging = null; // state of the active drag, if any
 let editing = false; // when true, cards show the drag handle, edit and delete buttons
 let editTarget = null; // the link currently open in the edit dialog
+let view = "checklist"; // what the list shows: "checklist" (default) or "links"
+let query = ""; // text in the search bar; filters the list as you type
+let checkItems = []; // checklist items from Firestore, in display order
+let checkDraft = null; // copy of the checklist while it is being edited (null when not editing)
+let unsubscribeChecklist = null;
 
 // Shows the message on whichever screen is visible (sign-in or app).
 function showStatus(message) {
@@ -195,7 +203,12 @@ function titleFromUrl(href) {
 // A title the user typed (customTitle) wins. Otherwise the title is generated from the address,
 // so it is recalculated each time. This also fixes titles saved before the splitting rules existed.
 function displayTitle(item) {
-  return (item.customTitle || "").trim() || titleFromUrl(item.url) || item.title || "";
+  return capitalizeWords((item.customTitle || "").trim() || titleFromUrl(item.url) || item.title || "");
+}
+
+// Capital first letter of every word, so typed titles like "best crypto tracker" show as "Best Crypto Tracker".
+function capitalizeWords(text) {
+  return text.replace(/(^|[^\p{L}\p{N}'])(\p{L})/gu, (_, before, letter) => before + letter.toUpperCase());
 }
 
 // ---------- Install (Android/Chrome and desktop Chromium) ----------
@@ -254,6 +267,10 @@ onAuthStateChanged(auth, (user) => {
     unsubscribeLinks();
     unsubscribeLinks = null;
   }
+  if (unsubscribeChecklist) {
+    unsubscribeChecklist();
+    unsubscribeChecklist = null;
+  }
 
   if (!user) {
     els.app.hidden = true;
@@ -261,6 +278,8 @@ onAuthStateChanged(auth, (user) => {
     els.list.replaceChildren();
     els.empty.hidden = true;
     items = [];
+    checkItems = [];
+    checkDraft = null;
     lastSignature = null;
     setEditing(false);
     return;
@@ -270,6 +289,7 @@ onAuthStateChanged(auth, (user) => {
   els.app.hidden = false;
   els.userName.textContent = user.displayName || user.email || "";
   listenToLinks(user.uid);
+  listenToChecklist(user.uid);
 });
 
 // ---------- Firestore: users/{uid}/links/{linkId} ----------
@@ -302,34 +322,71 @@ function listenToLinks(uid) {
         return;
       }
       items = list;
-      renderLinks(items);
+      if (view === "links") render();
     },
     (err) => showStatus(friendlyError(err))
   );
 }
 
+// The search bar also adds: text that is a website address and is not in the list yet gets added.
+// Anything else only filters the list.
 els.form.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!auth.currentUser) return;
 
-  const url = normalizeUrl(els.url.value);
+  const text = els.url.value.trim();
+  if (!text) return;
+
+  const url = normalizeUrl(text);
   if (!url) {
-    showStatus("Enter a valid website address, like netlify.com");
+    if (!currentSource().some(matchesQuery)) {
+      showStatus(`No match for "${text}". Paste a website address, like netlify.com, to add it.`);
+    }
     return;
   }
 
+  if (currentSource().some((item) => item.url === url)) {
+    showStatus("That website is already in your list.");
+    return;
+  }
+
+  // Editing the checklist: the new item goes into the draft and is saved with the Save button.
+  if (view === "checklist" && checkDraft !== null) {
+    checkDraft.push({ id: `new-${Date.now()}-${checkDraft.length}`, url, customTitle: "", isNew: true });
+    els.url.value = "";
+    query = "";
+    showStatus("");
+    render();
+    els.url.focus();
+    return;
+  }
+
+  const uid = auth.currentUser.uid;
   const title = titleFromUrl(url).slice(0, 120);
 
   els.addBtn.disabled = true;
   showStatus("");
   try {
-    await addDoc(linksCollection(auth.currentUser.uid), {
-      url,
-      title,
-      order: -Date.now(),
-      createdAt: serverTimestamp(),
-    });
-    els.form.reset();
+    if (view === "links") {
+      await addDoc(linksCollection(uid), {
+        url,
+        title,
+        order: -Date.now(),
+        createdAt: serverTimestamp(),
+      });
+    } else {
+      // New checklist items go to the bottom.
+      await addDoc(checklistCollection(uid), {
+        url,
+        title,
+        customTitle: "",
+        order: Date.now(),
+        createdAt: serverTimestamp(),
+      });
+    }
+    els.url.value = "";
+    query = "";
+    render();
     els.url.focus();
   } catch (err) {
     showStatus(friendlyError(err));
@@ -338,15 +395,156 @@ els.form.addEventListener("submit", async (event) => {
   }
 });
 
-// One Edit button for the whole list. In edit mode every card shows its drag handle and delete button.
+// ---------- Views, edit mode and the search bar ----------
+// The list shows the checklist (default) or the links. One Edit button serves both:
+// links edit in place (every card shows its handle and delete button), while the checklist edits a draft
+// that is only saved when you press Save.
 function setEditing(on) {
   editing = on;
-  els.list.classList.toggle("editing", on);
-  els.editBtn.textContent = on ? "Done" : "Edit";
-  els.editBtn.setAttribute("aria-pressed", String(on));
+  render();
 }
 
-els.editBtn.addEventListener("click", () => setEditing(!editing));
+function setView(next) {
+  if (next === view) return;
+  if (checkDraft !== null) {
+    showStatus("Save or cancel your checklist changes first.");
+    return;
+  }
+  view = next;
+  editing = false;
+  query = "";
+  els.url.value = "";
+  lastSignature = null;
+  showStatus("");
+  render();
+}
+
+els.viewChecklistBtn.addEventListener("click", () => setView("checklist"));
+els.viewLinksBtn.addEventListener("click", () => setView("links"));
+
+els.editBtn.addEventListener("click", () => {
+  if (view === "checklist") toggleChecklistEdit();
+  else setEditing(!editing);
+});
+els.cancelBtn.addEventListener("click", cancelChecklistEdit);
+
+els.url.addEventListener("input", () => {
+  query = els.url.value;
+  showStatus("");
+  render();
+});
+
+// ---------- Checklist: users/{uid}/checklist/{id} ----------
+// Each item has an `order` like links. `doneOn` holds the date it was checked (YYYY-MM-DD), so an item
+// counts as unchecked on a new day without any reset job.
+function checklistCollection(uid) {
+  return collection(db, "users", uid, "checklist");
+}
+
+function checkRef(id) {
+  return doc(db, "users", auth.currentUser.uid, "checklist", id);
+}
+
+function todayKey() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function isDoneToday(item) {
+  return item.doneOn === todayKey();
+}
+
+function listenToChecklist(uid) {
+  unsubscribeChecklist = onSnapshot(
+    checklistCollection(uid),
+    (snapshot) => {
+      checkItems = snapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => sortKey(a) - sortKey(b));
+      // While the draft is open, don't redraw it under the user's typing.
+      if (view === "checklist" && checkDraft === null) render();
+    },
+    (err) => showStatus(friendlyError(err))
+  );
+}
+
+async function toggleDone(item) {
+  if (!auth.currentUser) return;
+  try {
+    await updateDoc(checkRef(item.id), { doneOn: isDoneToday(item) ? "" : todayKey() });
+  } catch (err) {
+    showStatus(friendlyError(err));
+  }
+}
+
+function toggleChecklistEdit() {
+  if (checkDraft !== null) {
+    saveChecklist();
+    return;
+  }
+  checkDraft = checkItems.map((item) => ({
+    id: item.id,
+    url: item.url,
+    customTitle: item.customTitle || "",
+    isNew: false,
+  }));
+  showStatus("");
+  render();
+}
+
+function cancelChecklistEdit() {
+  checkDraft = null;
+  showStatus("");
+  render();
+}
+
+// Writes the whole draft in one batch: removed rows are deleted, new rows are added, and every row gets its position.
+async function saveChecklist() {
+  if (!auth.currentUser || checkDraft === null) return;
+
+  const rows = [];
+  for (const row of checkDraft) {
+    const url = normalizeUrl(row.url);
+    if (!url) {
+      showStatus(`"${row.url.trim() || "An empty row"}" is not a valid website address. Fix it, then save again.`);
+      return;
+    }
+    rows.push({ ...row, url, customTitle: row.customTitle.trim().slice(0, 120) });
+  }
+
+  const uid = auth.currentUser.uid;
+  const batch = writeBatch(db);
+  const kept = new Set(rows.filter((row) => !row.isNew).map((row) => row.id));
+  for (const old of checkItems) {
+    if (!kept.has(old.id)) batch.delete(checkRef(old.id));
+  }
+  rows.forEach((row, index) => {
+    const data = {
+      url: row.url,
+      title: titleFromUrl(row.url).slice(0, 120),
+      customTitle: row.customTitle,
+      order: index,
+    };
+    if (row.isNew) batch.set(doc(checklistCollection(uid)), { ...data, createdAt: serverTimestamp() });
+    else batch.update(checkRef(row.id), data);
+  });
+
+  checkDraft = null;
+  showStatus("");
+  render();
+  try {
+    await batch.commit();
+  } catch (err) {
+    showStatus(friendlyError(err));
+  }
+}
+
+// Drag order inside the draft: keep every row, including ones hidden by the search.
+function orderDraft(ids) {
+  const byId = new Map(checkDraft.map((row) => [row.id, row]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
 
 async function removeLink(item) {
   if (!auth.currentUser) return;
@@ -385,7 +583,7 @@ els.editUrl.addEventListener("input", updateLogoPreview);
 
 function openEditor(item) {
   editTarget = item;
-  els.editTitle.value = item.customTitle || "";
+  els.editTitle.value = displayTitle(item);
   els.editTitle.placeholder = titleFromUrl(item.url);
   els.editUrl.value = item.url;
   els.editLogo.value = item.customLogo || "";
@@ -439,14 +637,177 @@ let lastSignature = null;
 
 // Only rebuild the cards when something visible changed, so hover and clicks are never interrupted.
 function renderLinks(list) {
-  const signature = list
+  const visible = list.filter(matchesQuery);
+  const signature = visible
     .map((i) => JSON.stringify([i.id, i.order, i.url, i.customTitle || "", i.customLogo || ""]))
     .join("\n");
   if (signature !== lastSignature) {
     lastSignature = signature;
-    els.list.replaceChildren(...list.map(makeCard));
+    els.list.replaceChildren(...visible.map(makeCard));
   }
-  els.empty.hidden = list.length > 0;
+  setEmptyState(visible.length);
+}
+
+function renderChecklist() {
+  const drafting = checkDraft !== null;
+  const source = drafting ? checkDraft : checkItems;
+  // Checked-off items vanish from the daily checklist; they come back on a new day.
+  const visible = source.filter((item) => matchesQuery(item) && (drafting || !isDoneToday(item)));
+  els.list.replaceChildren(
+    ...visible.map((item) => (drafting ? makeCheckEditRow(item) : makeCheckRow(item)))
+  );
+  setEmptyState(visible.length);
+}
+
+// One render for whichever view is showing, plus the Edit/Save/Cancel buttons and the search placeholder.
+function render() {
+  updateEditControls();
+  if (view === "links") renderLinks(items);
+  else renderChecklist();
+}
+
+// Edit button icons: pencil while idle, check mark while editing (Done / Save).
+const ICON_ATTRS = 'width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+const PENCIL_ICON = `<svg ${ICON_ATTRS}><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+const CHECK_ICON = `<svg ${ICON_ATTRS}><path d="M20 6 9 17l-5-5"/></svg>`;
+
+function updateEditControls() {
+  const onLinks = view === "links";
+  const on = onLinks ? editing : checkDraft !== null;
+  els.list.classList.toggle("editing", on);
+  els.editBtn.querySelector(".btn-label").textContent = !on ? "Edit" : onLinks ? "Done" : "Save";
+  els.editBtn.querySelector(".btn-icon").innerHTML = on ? CHECK_ICON : PENCIL_ICON;
+  els.editBtn.setAttribute("aria-pressed", String(on));
+  els.cancelBtn.hidden = onLinks || !on;
+  els.viewChecklistBtn.setAttribute("aria-pressed", String(!onLinks));
+  els.viewLinksBtn.setAttribute("aria-pressed", String(onLinks));
+  els.url.placeholder = onLinks
+    ? "Search links, or paste a website to add it"
+    : "Search checklist, or paste a website to add it";
+}
+
+function searching() {
+  return query.trim() !== "";
+}
+
+// The search matches the title or the website address.
+function matchesQuery(item) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return displayTitle(item).toLowerCase().includes(q) || item.url.toLowerCase().includes(q);
+}
+
+// The rows of the view on screen (the draft while the checklist is being edited).
+function currentSource() {
+  return view === "links" ? items : (checkDraft ?? checkItems);
+}
+
+function setEmptyState(visibleCount) {
+  els.empty.hidden = visibleCount > 0;
+  if (visibleCount > 0) return;
+  if (searching()) {
+    els.empty.textContent = `No matches for "${query.trim()}". Paste a website address to add it.`;
+  } else if (view === "links") {
+    els.empty.textContent = "No links yet. Add your first tracker above.";
+  } else if (checkDraft === null && checkItems.length > 0) {
+    els.empty.textContent = "All done for today.";
+  } else {
+    els.empty.textContent = "Your checklist is empty. Paste a website above to add it.";
+  }
+}
+
+// Checklist row for daily use: a box to check off, the logo and title (tap to open the site).
+function makeCheckRow(item) {
+  const done = isDoneToday(item);
+  const card = document.createElement("article");
+  card.className = done ? "card check-card done" : "card check-card";
+  card.dataset.id = item.id;
+
+  const box = document.createElement("button");
+  box.type = "button";
+  box.className = "check-box";
+  box.setAttribute("role", "checkbox");
+  box.setAttribute("aria-checked", String(done));
+  box.setAttribute("aria-label", `Done: ${displayTitle(item)}`);
+  box.textContent = done ? "✓" : "";
+  box.addEventListener("click", () => toggleDone(item));
+
+  const link = document.createElement("a");
+  link.className = "card-main";
+  link.href = item.url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+
+  const title = document.createElement("span");
+  title.className = "card-title";
+  title.textContent = displayTitle(item);
+
+  link.append(makeLogo(item), title);
+  card.append(box, link);
+  return card;
+}
+
+// Checklist row while editing: drag handle, title and address fields, and a remove button.
+// Changes go to the draft object; nothing is saved until Save.
+function makeCheckEditRow(item) {
+  const card = document.createElement("article");
+  card.className = "card check-card is-edit";
+  card.dataset.id = item.id;
+
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "card-handle card-action";
+  handle.setAttribute("aria-label", "Drag to reorder");
+  handle.title = "Drag to reorder";
+  handle.textContent = "⠿";
+  handle.addEventListener("pointerdown", startDrag);
+  handle.addEventListener("pointermove", onDragMove);
+  handle.addEventListener("pointerup", onDragEnd);
+  handle.addEventListener("pointercancel", onDragEnd);
+
+  const fields = document.createElement("div");
+  fields.className = "check-fields";
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.className = "input check-input";
+  titleInput.maxLength = 120;
+  titleInput.placeholder = titleFromUrl(item.url);
+  // Start from the title the card shows, so you edit it instead of retyping it.
+  titleInput.value = displayTitle(item);
+  titleInput.setAttribute("aria-label", "Title");
+  titleInput.addEventListener("input", () => {
+    item.customTitle = titleInput.value;
+  });
+
+  const urlInput = document.createElement("input");
+  urlInput.type = "text";
+  urlInput.inputMode = "url";
+  urlInput.className = "input check-input";
+  urlInput.value = item.url;
+  urlInput.setAttribute("aria-label", "Website address");
+  urlInput.autocapitalize = "off";
+  urlInput.autocomplete = "off";
+  urlInput.spellcheck = false;
+  urlInput.addEventListener("input", () => {
+    item.url = urlInput.value;
+  });
+
+  fields.append(titleInput, urlInput);
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "icon-btn card-action";
+  del.setAttribute("aria-label", `Remove ${displayTitle(item)}`);
+  del.title = "Remove";
+  del.textContent = "✕";
+  del.addEventListener("click", () => {
+    checkDraft = checkDraft.filter((row) => row !== item);
+    render();
+  });
+
+  card.append(handle, fields, del);
+  return card;
 }
 
 function makeCard(item) {
@@ -547,6 +908,8 @@ function currentIds() {
 
 function startDrag(event) {
   if (event.button > 0) return;
+  // While searching, the list shows only some rows, so reordering is paused until the search is cleared.
+  if (searching()) return;
   event.preventDefault();
   const handle = event.currentTarget;
   handle.setPointerCapture(event.pointerId);
@@ -601,6 +964,12 @@ async function onDragEnd(event) {
   dragging = null;
   card.classList.remove("dragging");
   document.body.classList.remove("is-reordering");
+
+  // Checklist: reorder the draft only. Nothing is written until Save.
+  if (view === "checklist") {
+    if (checkDraft !== null) checkDraft = orderDraft(currentIds());
+    return;
+  }
 
   const newIds = currentIds();
   const changed = newIds.join("|") !== startIds.join("|");

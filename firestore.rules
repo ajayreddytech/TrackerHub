@@ -29,6 +29,37 @@ service cloud.firestore {
         && (!('customLogo' in request.resource.data) || (request.resource.data.customLogo is string && request.resource.data.customLogo.size() <= 2000));
     }
 
+    // Checklist items: same rules as links, plus `doneOn` (the date the item was checked).
+    match /users/{uid}/checklist/{itemId} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['url', 'title', 'customTitle', 'order', 'createdAt'])
+        && request.resource.data.url is string
+        && request.resource.data.url.size() > 0
+        && request.resource.data.url.size() <= 2000
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.customTitle is string
+        && request.resource.data.customTitle.size() <= 120
+        && request.resource.data.order is number
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['url', 'title', 'customTitle', 'order', 'doneOn'])
+        && request.resource.data.url is string
+        && request.resource.data.url.size() > 0
+        && request.resource.data.url.size() <= 2000
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.customTitle is string
+        && request.resource.data.customTitle.size() <= 120
+        && request.resource.data.order is number
+        && (!('doneOn' in request.resource.data) || (request.resource.data.doneOn is string && request.resource.data.doneOn.size() <= 10));
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
