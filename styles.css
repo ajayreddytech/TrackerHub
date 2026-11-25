@@ -632,9 +632,61 @@ body.is-reordering {
 
 /* ---------- Fullscreen / standalone polish ---------- */
 @media (display-mode: fullscreen), (display-mode: standalone) {
+  /* The top safe-area inset is applied once, inside the top bar, so the app starts at the very top of the screen. */
+  body { padding-top: 0; }
   .topbar { padding-top: calc(env(safe-area-inset-top) + 10px); }
 }
 
 @media (max-width: 420px) {
   .user-name { display: none; }
+}
+
+/* ---------- Checklist, Links and Edit share one row, icons only, centered (all screen sizes) ---------- */
+.list-bar {
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .list-bar .view-toggle {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .list-bar .view-btn {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    gap: 0;
+    padding: 12px 0;
+    justify-content: center;
+  }
+
+  .list-actions {
+    flex-shrink: 0;
+    align-self: stretch;
+    align-items: stretch;
+  }
+
+  #edit-btn {
+    position: relative;
+    align-self: stretch;
+    gap: 0;
+    padding: 0;
+    width: 52px;
+    justify-content: center;
+  }
+
+  /* Text labels are hidden visually but stay available to screen readers. */
+  .view-label,
+  .btn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
 }
